@@ -1,0 +1,8 @@
+# Build output (installers are published as GitHub Releases, not committed)
+build/
+dist/
+*.exe
+*.pdb
+
+# Runtime state written next to the executable
+state.txt
