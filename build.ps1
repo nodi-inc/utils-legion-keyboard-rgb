@@ -13,10 +13,9 @@ function Compile([string[]]$cscArgs) {
 }
 
 $version = ([regex]::Match((Get-Content "$src\Version.cs" -Raw), 'Display = "([^"]+)"')).Groups[1].Value
-$ico = "$build\app.ico"
-
-Compile @("/out:$build\MakeIcon.exe", '/r:System.Drawing.dll', "$src\tools\MakeIcon.cs")
-& "$build\MakeIcon.exe" $ico
+# Committed icon (regenerate with src\tools\make-icon.ps1). The build only runs the signed
+# Windows compiler, so Smart App Control has no unsigned helper executable to block.
+$ico = "$src\app.ico"
 
 Compile @('/target:winexe', "/out:$build\LegionKbdRgb.exe", "/win32icon:$ico", "/win32manifest:$src\app.manifest",
   "/resource:$ico,app.ico", '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll',

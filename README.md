@@ -53,7 +53,7 @@ Then run `dist\LegionKbdRgb-Setup-<version>.exe`.
 
 ### Option B: prebuilt installer
 
-Download `LegionKbdRgb-Setup-<version>.exe` from the [Releases](https://github.com/nodi-inc/utils-legion-keyboard-rgb/releases) page, if one is published.
+Download `LegionKbdRgb-Setup-<version>.exe` from the [latest release](https://github.com/nodi-inc/utils-legion-keyboard-rgb/releases/latest). Each release lists the SHA-256 hash of the installer so you can verify the download.
 
 > **Unsigned binary.** The installer is not code-signed. **Microsoft Defender SmartScreen** may show "Windows protected your PC"; choose *More info → Run anyway*. **Smart App Control** may also block downloaded unsigned executables. If it does, build the installer locally with Option A.
 
@@ -117,9 +117,10 @@ These notes come from investigating the Legion 5 15AHP11. They may help anyone w
 
 `build.ps1` uses `csc.exe` from the .NET Framework 4 that ships with Windows (`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319`). It:
 
-1. builds and runs `src/tools/MakeIcon.cs` to generate the multi-size application icon;
-2. compiles the tray application `LegionKbdRgb.exe`;
-3. compiles the installer and embeds the application in it, producing `dist/LegionKbdRgb-Setup-<version>.exe`.
+1. compiles the tray application `LegionKbdRgb.exe`;
+2. compiles the installer and embeds the application in it, producing `dist/LegionKbdRgb-Setup-<version>.exe`.
+
+The build runs no executable other than the signed Windows compiler. This matters when Smart App Control is on, because it may block freshly compiled helper tools.
 
 The version number is set in `src/Version.cs`.
 
@@ -128,7 +129,8 @@ The version number is set in `src/Version.cs`.
 | `src/KbdRgb.cs` | Tray application: hotkey, modes, color animation, LampArray output |
 | `src/hidutil.cs` | HID device enumeration and feature-report helpers (SetupAPI / hid.dll P/Invoke) |
 | `src/setup/Setup.cs` | Installer wizard. A copy is installed as `uninstall.exe` and also handles repair and removal |
-| `src/tools/MakeIcon.cs` | Build-time icon generator |
+| `src/app.ico` | Application icon (committed) |
+| `src/tools/MakeIcon.cs`, `make-icon.ps1` | Icon generator; run `make-icon.ps1` to regenerate `src/app.ico` |
 | `src/app.manifest` | asInvoker / DPI-aware manifest shared by both executables |
 
 ## Troubleshooting

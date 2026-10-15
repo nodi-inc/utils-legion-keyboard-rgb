@@ -1,12 +1,12 @@
 // Build-time tool: draws the app icon (dark keyboard tile with rainbow keys) into a multi-size .ico.
-// usage: MakeIcon.exe <out.ico>
+// usage: powershell -ExecutionPolicy Bypass -File src\tools\make-icon.ps1   (writes src\app.ico)
 using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 
-class MakeIcon {
+public static class MakeIcon {
   static GraphicsPath Round(RectangleF r, float rad) {
     var p = new GraphicsPath(); float d = rad * 2;
     p.AddArc(r.X, r.Y, d, d, 180, 90); p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
@@ -56,7 +56,7 @@ class MakeIcon {
     }
   }
 
-  static void Main(string[] a) {
+  public static void Main(string[] a) {
     int[] sizes = { 16, 24, 32, 48, 256 };
     var imgs = new byte[sizes.Length][];
     for (int i = 0; i < sizes.Length; i++) imgs[i] = Draw(sizes[i]);
