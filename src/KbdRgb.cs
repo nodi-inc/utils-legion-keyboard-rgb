@@ -1,6 +1,7 @@
 ﻿// LegionKbdRgb - keyboard backlight control for Lenovo Legion laptops without Legion Space.
 // Drives the keyboard through its standard HID LampArray collection (usage page 0x59).
-// Hotkey Ctrl+Alt+B cycles: Off -> random solid color -> rainbow -> Off.
+// Hotkey Ctrl+Alt+B cycles: Off -> solid color -> rainbow -> Off. In solid-color mode, holding
+// Ctrl+Alt+B sweeps through the hue wheel; releasing it keeps the color shown at that moment.
 //
 // Threading: the UI thread only handles the hotkey, tray icon and system events. All HID I/O
 // runs on a dedicated LightingWorker thread, so a slow or missing device can never make the
@@ -177,18 +178,27 @@ class App : ApplicationContext {
   [DllImport("user32.dll")] static extern bool PostMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll", SetLastError = true)] static extern bool RegisterHotKey(IntPtr hWnd, int id, int mods, int vk);
   [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+  [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
+  const int VK_CONTROL = 0x11, VK_MENU = 0x12;
+  const int HoldThresholdMs = 400;       // shorter press = tap (next mode)
+  const double PickCycleSeconds = 6.0;   // one full trip around the hue wheel while holding
+  // Firmware default of the Legion 5 15AHP11 keyboard profile (#5805FF).
+  static readonly Color DefaultSolid = Color.FromArgb(0x58, 0x05, 0xFF);
   static readonly string StateFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "state.txt");
 
   readonly LightingWorker worker = new LightingWorker();
-  readonly Random rnd = new Random();
   readonly MsgWindow win;
   readonly NotifyIcon tray;
   readonly ToolStripMenuItem offItem, solidItem, rainbowItem;
   readonly System.Windows.Forms.Timer hotkeyRetry = new System.Windows.Forms.Timer { Interval = 10000 };
+  readonly System.Windows.Forms.Timer holdTimer = new System.Windows.Forms.Timer { Interval = 30 };
+  DateTime pressedAt, lastPickTick;
+  bool pressPending, picking;
+  double pickHue;
   readonly EventWaitHandle exitEvent;
   bool hotkeyOk, hotkeyWarned;
   Mode mode;
-  Color solid = Color.Black;
+  Color solid = DefaultSolid;
 
   App() {
     LoadState();
@@ -197,10 +207,11 @@ class App : ApplicationContext {
     var menu = new ContextMenuStrip();
     menu.Items.Add(new ToolStripMenuItem("Next mode", null, (s, e) => Next()) { ShortcutKeyDisplayString = "Ctrl+Alt+B" });
     menu.Items.Add(new ToolStripSeparator());
-    offItem = new ToolStripMenuItem("Off", null, (s, e) => Apply(Mode.Off, false));
-    solidItem = new ToolStripMenuItem("Random solid color", null, (s, e) => Apply(Mode.Solid, true));
-    rainbowItem = new ToolStripMenuItem("Rainbow", null, (s, e) => Apply(Mode.Rainbow, false));
+    offItem = new ToolStripMenuItem("Off", null, (s, e) => Apply(Mode.Off));
+    solidItem = new ToolStripMenuItem("Solid color", null, (s, e) => Apply(Mode.Solid));
+    rainbowItem = new ToolStripMenuItem("Rainbow", null, (s, e) => Apply(Mode.Rainbow));
     menu.Items.AddRange(new ToolStripItem[] { offItem, solidItem, rainbowItem, new ToolStripSeparator() });
+    menu.Items.Add("Reset solid color to default", null, (s, e) => { solid = DefaultSolid; Apply(Mode.Solid); });
     menu.Items.Add("Open log folder", null, (s, e) => {
       try { System.Diagnostics.Process.Start("explorer.exe", "\"" + AppDomain.CurrentDomain.BaseDirectory + "\""); } catch { }
     });
@@ -210,13 +221,14 @@ class App : ApplicationContext {
 
     // Another program may own Ctrl+Alt+B at sign-in (or briefly during start-up): keep retrying.
     hotkeyRetry.Tick += (s, e) => RegisterHotkey();
+    holdTimer.Tick += (s, e) => OnHoldTick();
     RegisterHotkey();
 
     SystemEvents.PowerModeChanged += OnPowerModeChanged;
     SystemEvents.SessionSwitch += OnSessionSwitch;
 
     worker.Start();
-    Apply(mode, false);
+    Apply(mode);
 
     // The installer signals this event to ask for a clean shutdown (hands lighting back to the firmware).
     exitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "LegionKbdRgb.Exit");
@@ -259,15 +271,45 @@ class App : ApplicationContext {
       return s == null ? SystemIcons.Application : new Icon(s, SystemInformation.SmallIconSize);
   }
 
-  void Next() {
-    var m = (Mode)(((int)mode + 1) % 3);
-    Apply(m, m == Mode.Solid);
+  void Next() { Apply((Mode)(((int)mode + 1) % 3)); }
+
+  // Hotkey pressed. Outside solid-color mode it switches mode at once. In solid-color mode we wait
+  // to see whether it is a tap (next mode, on release) or a hold (sweep the hue until release).
+  void OnHotkey() {
+    if (pressPending) return;
+    if (mode != Mode.Solid) { Next(); return; }
+    pressPending = true; picking = false;
+    pressedAt = DateTime.UtcNow;
+    holdTimer.Start();
   }
 
-  void Apply(Mode m, bool newColor) {
+  static bool KeyDown(int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; }
+
+  void OnHoldTick() {
+    var now = DateTime.UtcNow;
+    bool held = KeyDown(VK_B) && KeyDown(VK_CONTROL) && KeyDown(VK_MENU);
+    if (!held) {
+      holdTimer.Stop();
+      pressPending = false;
+      if (picking) { picking = false; Apply(Mode.Solid); Log.Write("Solid color set to #" + (solid.ToArgb() & 0xFFFFFF).ToString("X6")); }
+      else Next();
+      return;
+    }
+    if (!picking && (now - pressedAt).TotalMilliseconds >= HoldThresholdMs) {
+      picking = true;
+      pickHue = solid.GetHue();
+      lastPickTick = now;
+    }
+    if (picking) {
+      pickHue = (pickHue + (now - lastPickTick).TotalSeconds * 360.0 / PickCycleSeconds) % 360.0;
+      lastPickTick = now;
+      solid = LightingWorker.Hsv(pickHue, 1, 1);
+      worker.Set(Mode.Solid, solid);
+    }
+  }
+
+  void Apply(Mode m) {
     mode = m;
-    if (m == Mode.Solid && (newColor || solid.ToArgb() == Color.Black.ToArgb()))
-      solid = LightingWorker.Hsv(rnd.NextDouble() * 360, 0.75 + rnd.NextDouble() * 0.25, 1);
     worker.Set(m, solid);
     offItem.Checked = m == Mode.Off; solidItem.Checked = m == Mode.Solid; rainbowItem.Checked = m == Mode.Rainbow;
     UpdateTrayText();
@@ -285,17 +327,19 @@ class App : ApplicationContext {
       var p = File.ReadAllText(StateFile).Trim().Split(',');
       mode = (Mode)int.Parse(p[0]);
       if (mode < Mode.Off || mode > Mode.Rainbow) mode = Mode.Rainbow;
-      solid = Color.FromArgb(int.Parse(p[1]));
+      // Format "mode,argb,2". Older versions stored a random color without the version field;
+      // those fall back to the default color.
+      solid = p.Length >= 3 && p[2] == "2" ? Color.FromArgb(int.Parse(p[1])) : DefaultSolid;
     } catch { mode = Mode.Rainbow; }
   }
 
   void SaveState() {
-    try { File.WriteAllText(StateFile, (int)mode + "," + solid.ToArgb()); } catch (Exception ex) { Log.Write("Could not save state: " + ex.Message); }
+    try { File.WriteAllText(StateFile, (int)mode + "," + solid.ToArgb() + ",2"); } catch (Exception ex) { Log.Write("Could not save state: " + ex.Message); }
   }
 
   protected override void ExitThreadCore() {
     Log.Write("Exiting");
-    hotkeyRetry.Stop();
+    hotkeyRetry.Stop(); holdTimer.Stop();
     SystemEvents.PowerModeChanged -= OnPowerModeChanged;
     SystemEvents.SessionSwitch -= OnSessionSwitch;
     if (hotkeyOk) UnregisterHotKey(win.Handle, HOTKEY_ID);
@@ -308,7 +352,7 @@ class App : ApplicationContext {
     readonly App app;
     public MsgWindow(App a) { app = a; CreateHandle(new CreateParams()); }
     protected override void WndProc(ref Message m) {
-      if (m.Msg == WM_HOTKEY && (int)m.WParam == HOTKEY_ID) app.Next();
+      if (m.Msg == WM_HOTKEY && (int)m.WParam == HOTKEY_ID) app.OnHotkey();
       else if (m.Msg == WM_APP_EXIT) app.ExitThread();
       base.WndProc(ref m);
     }
