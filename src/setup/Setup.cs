@@ -48,7 +48,9 @@ static class Product {
 }
 
 static class Installer {
-  public static void Install(string dir, bool shortcut, bool runNow, Action<string> log) {
+  // Returns false when runNow was requested but the application did not start (for example,
+  // blocked by Smart App Control or antivirus); the wizard then tells the user what to check.
+  public static bool Install(string dir, bool shortcut, bool runNow, Action<string> log) {
     log("Stopping running instances of LegionKbdRgb");
     StopApp();
 
@@ -82,8 +84,24 @@ static class Installer {
       k.SetValue("StartMenuShortcut", shortcut ? 1 : 0, RegistryValueKind.DWord);
     }
 
-    if (runNow) { log("Starting LegionKbdRgb"); Schtasks("/run /tn " + Product.TaskName, false); }
+    bool started = true;
+    if (runNow) {
+      log("Starting LegionKbdRgb");
+      Schtasks("/run /tn " + Product.TaskName, false);
+      started = WaitForApp(8000);
+      log(started ? "LegionKbdRgb is running" : "Warning: LegionKbdRgb did not start");
+    }
     log("Completed.");
+    return started;
+  }
+
+  static bool WaitForApp(int timeoutMs) {
+    var until = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+    do {
+      if (Process.GetProcessesByName(Product.AppName).Length > 0) return true;
+      Thread.Sleep(250);
+    } while (DateTime.UtcNow < until);
+    return false;
   }
 
   public static void Uninstall(Action<string> log) {
@@ -100,7 +118,7 @@ static class Installer {
     Registry.CurrentUser.DeleteSubKeyTree(Product.UninstKey, false);
 
     log("Deleting files from " + dir);
-    foreach (var name in new[] { Product.ExeName, "state.txt" }) {
+    foreach (var name in new[] { Product.ExeName, "state.txt", "log.txt", "log.old.txt" }) {
       var p = Path.Combine(dir, name);
       if (File.Exists(p)) File.Delete(p);
     }
@@ -140,6 +158,7 @@ static class Installer {
       "    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\r\n" +
       "    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\r\n" +
       "    <Priority>7</Priority>\r\n" +
+      "    <RestartOnFailure><Interval>PT1M</Interval><Count>3</Count></RestartOnFailure>\r\n" +
       "  </Settings>\r\n" +
       "  <Actions Context=\"Author\"><Exec><Command>\"" + SecurityElement.Escape(exe) + "\"</Command></Exec></Actions>\r\n" +
       "</Task>\r\n";
@@ -331,11 +350,12 @@ class Wizard : Form {
     Action<string> log = m => BeginInvoke(new Action(() => { logBox.Items.Add(m); logBox.TopIndex = logBox.Items.Count - 1; }));
     new Thread(() => {
       Exception err = null;
+      bool started = true;
       try {
         if (op == Op.Uninstall) Installer.Uninstall(log);
-        else Installer.Install(dir, shortcut, runNow, log);
+        else started = Installer.Install(dir, shortcut, runNow, log);
       } catch (Exception ex) { err = ex; }
-      BeginInvoke(new Action(() => Done(op, err)));
+      BeginInvoke(new Action(() => Done(op, err, started)));
     }) { IsBackground = true }.Start();
   }
 
@@ -343,7 +363,7 @@ class Wizard : Form {
     using (var k = Registry.CurrentUser.OpenSubKey(Product.UninstKey)) return k == null || !(k.GetValue("StartMenuShortcut") is int) || (int)k.GetValue("StartMenuShortcut") != 0;
   }
 
-  void Done(Op op, Exception err) {
+  void Done(Op op, Exception err, bool started) {
     busy = false;
     bar.Style = ProgressBarStyle.Continuous; bar.Value = bar.Maximum;
     if (err != null) {
@@ -359,6 +379,15 @@ class Wizard : Form {
       : "Press Ctrl+Alt+B to cycle the keyboard backlight:\n\n    Off → Random solid color → Rainbow\n\n" +
         "LegionKbdRgb starts automatically when you sign in. To repair or remove it, open\n" +
         "Settings > Apps > Installed apps and select LegionKbdRgb Keyboard Backlight.";
+    if (!started) {
+      subtitle.Text = "Installed, but the application did not start.";
+      finishText.ForeColor = Color.DarkRed;
+      finishText.Text =
+        "LegionKbdRgb was installed, but Windows did not allow it to start.\n\n" +
+        "This usually means Smart App Control or antivirus software blocked the program.\n" +
+        "Check Windows Security > Protection history, and use an officially signed\n" +
+        "release from the project's GitHub page.";
+    }
     Show(finish);
   }
 

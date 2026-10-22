@@ -6,3 +6,11 @@ dist/
 
 # Runtime state written next to the executable
 state.txt
+
+# Local code-signing configuration (see signing.example.json)
+signing.json
+
+# Local test runs
+test-run/
+log.txt
+log.old.txt
