@@ -1,6 +1,6 @@
 ﻿// LegionKbdRgb - keyboard backlight control for Lenovo Legion laptops without Legion Space.
 // Drives the keyboard through its standard HID LampArray collection (usage page 0x59).
-// Hotkey Ctrl+Alt+B cycles: Off -> solid color -> rainbow -> Off. In solid-color mode, holding
+// Hotkey Ctrl+Alt+B cycles: Off -> solid color -> aurora (hue cycle) -> Off. In solid-color mode, holding
 // Ctrl+Alt+B sweeps through the hue wheel; releasing it keeps the color shown at that moment.
 //
 // Threading: the UI thread only handles the hotkey, tray icon and system events. All HID I/O
@@ -187,6 +187,7 @@ class App : ApplicationContext {
   static readonly string StateFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "state.txt");
 
   readonly LightingWorker worker = new LightingWorker();
+  readonly Osd osd = new Osd();
   readonly MsgWindow win;
   readonly NotifyIcon tray;
   readonly ToolStripMenuItem offItem, solidItem, rainbowItem;
@@ -209,7 +210,7 @@ class App : ApplicationContext {
     menu.Items.Add(new ToolStripSeparator());
     offItem = new ToolStripMenuItem("Off", null, (s, e) => Apply(Mode.Off));
     solidItem = new ToolStripMenuItem("Solid color", null, (s, e) => Apply(Mode.Solid));
-    rainbowItem = new ToolStripMenuItem("Rainbow", null, (s, e) => Apply(Mode.Rainbow));
+    rainbowItem = new ToolStripMenuItem("Aurora", null, (s, e) => Apply(Mode.Rainbow));
     menu.Items.AddRange(new ToolStripItem[] { offItem, solidItem, rainbowItem, new ToolStripSeparator() });
     menu.Items.Add("Reset solid color to default", null, (s, e) => { solid = DefaultSolid; Apply(Mode.Solid); });
     menu.Items.Add("Open log folder", null, (s, e) => {
@@ -228,7 +229,7 @@ class App : ApplicationContext {
     SystemEvents.SessionSwitch += OnSessionSwitch;
 
     worker.Start();
-    Apply(mode);
+    Apply(mode, false);
 
     // The installer signals this event to ask for a clean shutdown (hands lighting back to the firmware).
     exitEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "LegionKbdRgb.Exit");
@@ -305,19 +306,21 @@ class App : ApplicationContext {
       lastPickTick = now;
       solid = LightingWorker.Hsv(pickHue, 1, 1);
       worker.Set(Mode.Solid, solid);
+      osd.ShowPicker(pickHue, solid);
     }
   }
 
-  void Apply(Mode m) {
+  void Apply(Mode m, bool showOsd = true) {
     mode = m;
     worker.Set(m, solid);
+    if (showOsd) osd.ShowMode(m, solid);
     offItem.Checked = m == Mode.Off; solidItem.Checked = m == Mode.Solid; rainbowItem.Checked = m == Mode.Rainbow;
     UpdateTrayText();
     SaveState();
   }
 
   void UpdateTrayText() {
-    string t = "LegionKbdRgb - " + (mode == Mode.Off ? "Off" : mode == Mode.Solid ? "Solid color" : "Rainbow");
+    string t = "LegionKbdRgb - " + (mode == Mode.Off ? "Off" : mode == Mode.Solid ? "Solid color" : "Aurora");
     if (!hotkeyOk) t += " (hotkey unavailable)";
     tray.Text = t.Length > 63 ? t.Substring(0, 63) : t;
   }
@@ -359,7 +362,14 @@ class App : ApplicationContext {
   }
 
   [STAThread]
-  static void Main() {
+  static void Main(string[] args) {
+    if (args.Length == 2 && args[0] == "--render-osd") {
+      Osd.RenderPreview(args[1] + "-off.png", Mode.Off, DefaultSolid, false, 0);
+      Osd.RenderPreview(args[1] + "-solid.png", Mode.Solid, DefaultSolid, false, 0);
+      Osd.RenderPreview(args[1] + "-aurora.png", Mode.Rainbow, DefaultSolid, false, 0);
+      Osd.RenderPreview(args[1] + "-pick.png", Mode.Solid, LightingWorker.Hsv(160, 1, 1), true, 160);
+      return;
+    }
     bool created;
     using (new Mutex(true, "LegionKbdRgb.SingleInstance", out created)) {
       if (!created) return;

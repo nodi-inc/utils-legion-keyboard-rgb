@@ -273,7 +273,7 @@ class Wizard : Form {
     AddLabel(welcome,
       "This wizard installs LegionKbdRgb, a lightweight replacement for the keyboard\n" +
       "lighting controls in Lenovo Legion Space.\n\n" +
-      "  •  Ctrl+Alt+B cycles the backlight:  Off → Solid color → Rainbow\n" +
+      "  •  Ctrl+Alt+B cycles the backlight:  Off → Solid color → Aurora\n" +
       "  •  In solid-color mode, hold Ctrl+Alt+B to sweep through colors; release to keep one.\n" +
       "  •  Modes are also available from the notification area icon.\n" +
       "  •  Starts automatically when you sign in to Windows.\n" +
@@ -377,7 +377,7 @@ class Wizard : Form {
     subtitle.Text = op == Op.Uninstall ? "LegionKbdRgb has been removed from this computer." : "LegionKbdRgb is installed and ready to use.";
     finishText.Text = op == Op.Uninstall
       ? "LegionKbdRgb has been successfully removed.\n\nKeyboard lighting has been returned to the firmware default."
-      : "Press Ctrl+Alt+B to cycle the keyboard backlight:\n\n    Off → Solid color → Rainbow\n" +
+      : "Press Ctrl+Alt+B to cycle the keyboard backlight:\n\n    Off → Solid color → Aurora\n" +
         "In solid-color mode, hold Ctrl+Alt+B to choose a color.\n\n" +
         "LegionKbdRgb starts automatically when you sign in. To repair or remove it, open\n" +
         "Settings > Apps > Installed apps and select LegionKbdRgb Keyboard Backlight.";

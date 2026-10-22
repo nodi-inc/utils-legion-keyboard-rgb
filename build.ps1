@@ -53,7 +53,7 @@ $ico = "$src\app.ico"
 $app = "$build\LegionKbdRgb.exe"
 Compile @('/target:winexe', "/out:$app", "/win32icon:$ico", "/win32manifest:$src\app.manifest",
   "/resource:$ico,app.ico", '/r:System.Windows.Forms.dll', '/r:System.Drawing.dll',
-  "$src\KbdRgb.cs", "$src\hidutil.cs", "$src\Version.cs")
+  "$src\KbdRgb.cs", "$src\Osd.cs", "$src\hidutil.cs", "$src\Version.cs")
 Sign $app   # sign before embedding: the installer writes this exact file to disk
 
 $setup = "$dist\LegionKbdRgb-Setup-$version.exe"

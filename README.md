@@ -8,11 +8,11 @@ Removing Legion Space also stops **Fn+Space** from changing the keyboard RGB lig
 
 ## Features
 
-- **Ctrl+Alt+B** cycles the backlight: **Off → Solid color → Rainbow → Off**
+- **Ctrl+Alt+B** cycles the backlight: **Off → Solid color → Aurora → Off**
   - *Solid color* defaults to the Legion firmware purple (`#5805FF`).
   - **Choosing a color:** in solid-color mode, **hold** Ctrl+Alt+B. After about 0.4 s the color starts sweeping around the hue wheel, taking 6 s for a full turn. Release the keys to keep the color shown at that moment. It is remembered. A short tap still moves to the next mode.
   - *Reset solid color to default* in the tray menu restores the purple.
-  - *Rainbow* smoothly cycles through the hue wheel every 8 seconds.
+  - *Aurora* smoothly cycles through the hue wheel every 8 seconds.
 - A notification-area (tray) icon: left-click selects the next mode; right-click opens a menu to pick a mode or exit.
 - The last mode is remembered across sign-out and reboot.
 - Designed to keep running unattended:
@@ -118,7 +118,7 @@ These notes come from investigating the Legion 5 15AHP11. They may help anyone w
   - `LampArrayControl` (report `6`) with `AutonomousMode = 0`, which takes control from the firmware;
   - `LampRangeUpdate` (report `5`) to set every lamp to the same color.
 
-  Dynamic Lighting can take control back, so the current state is re-applied every 5 seconds. The Rainbow mode streams updates at about 30 fps.
+  Dynamic Lighting can take control back, so the current state is re-applied every 5 seconds. The Aurora mode streams updates at about 30 fps.
 - **On exit**, LegionKbdRgb sets `AutonomousMode = 1`, which hands the keyboard back to the firmware.
 
 ## Building
