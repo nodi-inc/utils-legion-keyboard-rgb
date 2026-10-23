@@ -11,8 +11,12 @@ using System.Windows.Forms;
 
 class Osd : Form {
   // Layout in logical (96 dpi) pixels.
-  const int W = 380, HeaderH = 34, ChipsH = 46, PickerH = 62, Pad = 14, Radius = 18;
-  const int FadeInMs = 120, FadeOutMs = 260, VisibleMs = 1400;
+  // Rows: header, mode chips, hotkey hint; in Solid mode also the hue bar, hex value and hold hint.
+  const int W = 440, HeaderH = 42, ChipsH = 54, HintH = 34, PickerH = 104, BottomPad = 8, Pad = 16, Radius = 20;
+  const int GapAboveTaskbar = 32;
+  // Long enough to read the panel after a key press without lingering: 2 s, plus a little more
+  // after a color pick so the chosen color can be confirmed, then a gentle fade.
+  const int FadeInMs = 120, FadeOutMs = 450, VisibleMs = 2000, AfterPickMs = 3200;
 
   static readonly string[] Names = { "Off", "Solid", "Aurora" };
 
@@ -20,12 +24,13 @@ class Osd : Form {
   readonly float scale;
   Mode mode;
   Color solid;
-  bool picking, showPicker;
+  bool picking;
   double pickHue;
   DateTime shownAt, lastInput;
   double opacity;     // 0..1, animated
+  int holdMs = VisibleMs;
   bool visible;
-  int anchorLeft, anchorBottom;   // panel grows upward when the picker row appears
+  int anchorLeft, anchorTop;   // top stays put; the Solid rows extend the panel downward
   Font capFont, hintFont, labelFont, hexFont;
 
   public Osd() {
@@ -34,10 +39,10 @@ class Osd : Form {
     StartPosition = FormStartPosition.Manual;
     TopMost = true;
     using (var g = Graphics.FromHwnd(IntPtr.Zero)) scale = g.DpiX / 96f;
-    capFont = Px("Segoe UI Semibold", 7.5f);
-    hintFont = Px("Segoe UI", 7.5f);
-    labelFont = Px("Segoe UI Semibold", 10f);
-    hexFont = Px("Consolas", 9f);
+    capFont = Px("Segoe UI Semibold", 9f);
+    hintFont = Px("Segoe UI", 9.5f);
+    labelFont = Px("Segoe UI Semibold", 12f);
+    hexFont = Px("Consolas", 10.5f);
     frame.Tick += (s, e) => Animate();
   }
 
@@ -54,22 +59,21 @@ class Osd : Form {
 
   // Mode changed (tap, tray menu, or end of a color pick).
   public void ShowMode(Mode m, Color c) {
+    holdMs = picking ? AfterPickMs : VisibleMs;
     mode = m; solid = c; picking = false;
     Touch();
   }
 
   // Color pick in progress: hue in degrees, resulting color.
   public void ShowPicker(double hue, Color c) {
-    mode = Mode.Solid; solid = c; pickHue = hue; picking = true; showPicker = true;
+    mode = Mode.Solid; solid = c; pickHue = hue; picking = true;
     Touch();
   }
 
   void Touch() {
     lastInput = DateTime.UtcNow;
-    if (!picking && mode != Mode.Solid) showPicker = false;
     if (!visible) {
       visible = true; shownAt = DateTime.UtcNow; opacity = 0;
-      if (!picking) showPicker = false;
       PlaceOnActiveMonitor();
       if (!IsHandleCreated) CreateHandle();
       ShowWindow(Handle, 4 /* SW_SHOWNOACTIVATE */);
@@ -84,26 +88,29 @@ class Osd : Form {
   // Bitmaps render at 96 dpi, so size fonts in pixels scaled to the monitor DPI.
   Font Px(string family, float points) { return new Font(family, points * 96f / 72f * scale, FontStyle.Regular, GraphicsUnit.Pixel); }
 
-  int PanelHeight { get { return HeaderH + ChipsH + Pad + (showPicker ? PickerH : 0); } }
+  bool HasPickerRows { get { return mode == Mode.Solid; } }
+
+  int PanelHeight { get { return HeaderH + ChipsH + HintH + (HasPickerRows ? PickerH : 0) + BottomPad; } }
 
   void PlaceOnActiveMonitor() {
     var fg = GetForegroundWindow();
     var screen = fg != IntPtr.Zero ? Screen.FromHandle(fg) : Screen.FromPoint(Cursor.Position);
     var wa = screen.WorkingArea;
     anchorLeft = wa.Left + (wa.Width - S(W)) / 2;
-    anchorBottom = wa.Bottom - S(64);
+    // Place the tallest (Solid) layout's bottom edge GapAboveTaskbar above the work area.
+    anchorTop = wa.Bottom - S(GapAboveTaskbar) - S(HeaderH + ChipsH + HintH + PickerH + BottomPad);
   }
 
   void Animate() {
     var now = DateTime.UtcNow;
     double sinceInput = (now - lastInput).TotalMilliseconds;
     double target;
-    if (picking || sinceInput < VisibleMs) target = 1;
-    else target = Math.Max(0, 1 - (sinceInput - VisibleMs) / FadeOutMs);
+    if (picking || sinceInput < holdMs) target = 1;
+    else target = Math.Max(0, 1 - (sinceInput - holdMs) / FadeOutMs);
     double fadeIn = Math.Min(1, (now - shownAt).TotalMilliseconds / FadeInMs);
     opacity = Math.Min(target, fadeIn);
 
-    if (!picking && sinceInput >= VisibleMs + FadeOutMs) {
+    if (!picking && sinceInput >= holdMs + FadeOutMs) {
       frame.Stop(); visible = false; ShowWindow(Handle, 0 /* SW_HIDE */);
       return;
     }
@@ -112,7 +119,7 @@ class Osd : Form {
 
   void Render() {
     int w = S(W), h = S(PanelHeight);
-    var target = new Point(anchorLeft, anchorBottom - h);
+    var target = new Point(anchorLeft, anchorTop);
     using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb)) {
       using (var g = Graphics.FromImage(bmp)) Draw(g, w, h);
       Present(bmp, target, (byte)Math.Round(255 * EaseOut(opacity)));
@@ -121,7 +128,7 @@ class Osd : Form {
 
   // Development aid: render the panel to a PNG without showing a window (--render-osd).
   public static void RenderPreview(string path, Mode m, Color c, bool picker, double hue) {
-    var o = new Osd { mode = m, solid = c, showPicker = picker, picking = picker, pickHue = hue };
+    var o = new Osd { mode = m, solid = c, picking = picker, pickHue = hue };
     int w = o.S(W), h = o.S(o.PanelHeight);
     using (var bmp = new Bitmap(w + 40, h + 40, PixelFormat.Format32bppArgb)) {
       using (var g = Graphics.FromImage(bmp)) {
@@ -148,18 +155,12 @@ class Osd : Form {
       using (var pen = new Pen(Color.FromArgb(40, 255, 255, 255), 1)) g.DrawPath(pen, path);
     }
 
-    // Header: caption on the left, accent swatch strip on the right
-    var cap = capFont; var hint = hintFont;
+    // Header
     using (var capBrush = new SolidBrush(Color.FromArgb(150, 255, 255, 255)))
-      g.DrawString("KEYBOARD BACKLIGHT", cap, capBrush, S(Pad + 2), S(12));
-    using (var hb = new SolidBrush(Color.FromArgb(110, 255, 255, 255))) {
-      string t = picking ? "Release to keep" : "Ctrl+Alt+B";
-      var sz = g.MeasureString(t, hint);
-      g.DrawString(t, hint, hb, w - S(Pad + 2) - sz.Width, S(12));
-    }
+      g.DrawString("KEYBOARD BACKLIGHT", capFont, capBrush, S(Pad + 2), S(14));
 
     // Mode chips
-    float gap = S(6), chipW = (w - 2 * S(Pad) - 2 * gap) / 3f, chipH = S(ChipsH - 8), y = S(HeaderH);
+    float gap = S(8), chipW = (w - 2 * S(Pad) - 2 * gap) / 3f, chipH = S(ChipsH - 8), y = S(HeaderH);
     var label = labelFont;
     {
       for (int i = 0; i < 3; i++) {
@@ -171,15 +172,40 @@ class Osd : Form {
           using (var pen = new Pen(Color.FromArgb(60, 255, 255, 255), 1)) { g.FillPath(b, p); g.DrawPath(pen, p); }
         }
         var textSize = g.MeasureString(Names[i], label);
-        float dot = S(12), contentW = dot + S(8) + textSize.Width;
+        float dot = S(14), contentW = dot + S(9) + textSize.Width;
         float x0 = r.X + (r.Width - contentW) / 2, cy = r.Y + r.Height / 2;
         DrawModeDot(g, (Mode)i, new RectangleF(x0, cy - dot / 2, dot, dot), sel);
         using (var tb = new SolidBrush(sel ? Color.White : Color.FromArgb(120, 255, 255, 255)))
-          g.DrawString(Names[i], label, tb, x0 + dot + S(8), cy - textSize.Height / 2);
+          g.DrawString(Names[i], label, tb, x0 + dot + S(9), cy - textSize.Height / 2);
       }
     }
 
-    if (showPicker) DrawPicker(g, w);
+    // Hotkey hint under the chips
+    DrawHint(g, w, S(HeaderH + ChipsH) + S(6), "Press", "Ctrl+Alt+B", "to switch mode");
+
+    if (HasPickerRows) DrawPicker(g, w);
+  }
+
+  // Centered hint line with the hotkey drawn as a keycap: "<before> [key] <after>".
+  void DrawHint(Graphics g, int w, float y, string before, string key, string after) {
+    var f = hintFont;
+    var fmt = StringFormat.GenericTypographic;
+    float sp = S(7), kpx = S(7), kpy = S(2);
+    var sb = g.MeasureString(before, f, int.MaxValue, fmt);
+    var sk = g.MeasureString(key, f, int.MaxValue, fmt);
+    var sa = g.MeasureString(after, f, int.MaxValue, fmt);
+    float total = sb.Width + sp + sk.Width + 2 * kpx + sp + sa.Width, x = (w - total) / 2;
+    using (var tb = new SolidBrush(Color.FromArgb(150, 255, 255, 255))) {
+      g.DrawString(before, f, tb, x, y, fmt);
+      x += sb.Width + sp;
+      var cap = new RectangleF(x, y - kpy, sk.Width + 2 * kpx, sk.Height + 2 * kpy);
+      using (var p = Round(cap, S(6)))
+      using (var kb = new SolidBrush(Color.FromArgb(30, 255, 255, 255)))
+      using (var kp = new Pen(Color.FromArgb(70, 255, 255, 255), 1)) { g.FillPath(kb, p); g.DrawPath(kp, p); }
+      using (var kt = new SolidBrush(Color.FromArgb(230, 255, 255, 255))) g.DrawString(key, f, kt, x + kpx, y, fmt);
+      x += cap.Width + sp;
+      g.DrawString(after, f, tb, x, y, fmt);
+    }
   }
 
   void DrawModeDot(Graphics g, Mode m, RectangleF r, bool sel) {
@@ -197,8 +223,9 @@ class Osd : Form {
   }
 
   void DrawPicker(Graphics g, int w) {
-    float top = S(HeaderH + ChipsH + 4);
-    var bar = new RectangleF(S(Pad + 6), top + S(10), w - 2 * S(Pad + 6), S(12));
+    float top = S(HeaderH + ChipsH + HintH);
+    using (var div = new Pen(Color.FromArgb(28, 255, 255, 255), 1)) g.DrawLine(div, S(Pad + 6), top, w - S(Pad + 6), top);
+    var bar = new RectangleF(S(Pad + 10), top + S(18), w - 2 * S(Pad + 10), S(14));
     using (var p = Round(bar, bar.Height / 2))
     using (var br = HueBrush(bar, 0, 255)) {
       g.FillPath(br, p);
@@ -216,10 +243,13 @@ class Osd : Form {
     using (var tb = new SolidBrush(Color.FromArgb(200, 255, 255, 255))) {
       string hex = "#" + (solid.ToArgb() & 0xFFFFFF).ToString("X6");
       var sz = g.MeasureString(hex, f);
-      float sw = S(10), total = sw + S(6) + sz.Width, x = (w - total) / 2, y = bar.Bottom + S(10);
+      float sw = S(12), total = sw + S(7) + sz.Width, x = (w - total) / 2, y = bar.Bottom + S(12);
       using (var sb = new SolidBrush(solid)) g.FillEllipse(sb, x, y + (sz.Height - sw) / 2, sw, sw);
-      g.DrawString(hex, f, tb, x + sw + S(6), y);
+      g.DrawString(hex, f, tb, x + sw + S(7), y);
     }
+
+    if (picking) DrawHint(g, w, bar.Bottom + S(44), "Release", "Ctrl+Alt+B", "to keep this color");
+    else DrawHint(g, w, bar.Bottom + S(44), "Hold", "Ctrl+Alt+B", "to adjust the color");
   }
 
   static LinearGradientBrush HueBrush(RectangleF r, double phase, int alpha) {
