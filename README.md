@@ -63,7 +63,11 @@ Then run `dist\LegionKbdRgb-Setup-<version>.exe`.
 
 Download `LegionKbdRgb-Setup-<version>.exe` from the [latest release](https://github.com/nodi-inc/utils-legion-keyboard-rgb/releases/latest). Each release lists the SHA-256 hash of the installer so you can verify the download.
 
-> **Code signing.** Windows **Smart App Control** blocks unsigned programs based on cloud reputation, and it can start blocking an unsigned program it previously allowed. Official releases are meant to be signed with Azure Artifact Signing. Check the release notes, or run `Get-AuthenticodeSignature`, to confirm a download is signed. A brand-new signed release may still show a SmartScreen prompt until it builds reputation. Maintainers: see [docs/code-signing.md](docs/code-signing.md).
+> **Unsigned binaries.** Releases are not code-signed.
+> - **Microsoft Defender SmartScreen** may show "Windows protected your PC" the first time you run a downloaded installer. Choose *More info → Run anyway*.
+> - On PCs where **Smart App Control** is on, Windows decides from cloud reputation whether to allow an unsigned program. It can block LegionKbdRgb, and there is no "run anyway" option. To use the app on such a PC, Smart App Control must be turned off in *Windows Security → App & browser control*. That choice is yours to make.
+>
+> Maintainers who want signed builds can configure optional signing; see [docs/code-signing.md](docs/code-signing.md).
 
 ### What the installer does
 
@@ -147,7 +151,7 @@ If a `signing.json` file is present, `build.ps1` Authenticode-signs both executa
 
 - **Ctrl+Alt+B stopped working.**
   - Check that the tray icon is present. If it is missing, the application is not running.
-  - Open **Windows Security → Protection history** and look for an entry saying *Smart App Control* blocked `LegionKbdRgb.exe`. If you find one, install a signed release.
+  - Open **Windows Security → Protection history** and look for an entry saying *Smart App Control* blocked `LegionKbdRgb.exe`. If you find one, see the note on unsigned binaries under [Installation](#installation).
   - Otherwise, right-click the tray icon and choose *Open log folder*. `log.txt` records startup, device and hotkey problems.
 
 - **Nothing happens when I press Ctrl+Alt+B.**
