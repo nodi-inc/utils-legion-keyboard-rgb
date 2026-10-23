@@ -98,6 +98,7 @@ class LightingWorker {
   readonly object gate = new object();
   Mode mode;
   Color solid;
+  int cycleSeconds = 8;
   int requested, rendered = -1;
   volatile bool stopping;
 
@@ -111,6 +112,9 @@ class LightingWorker {
     lock (gate) { mode = m; solid = c; requested++; }
     wake.Set();
   }
+
+  // Aurora: seconds per trip around the hue wheel. Takes effect on the next frame.
+  public void SetCycle(int seconds) { lock (gate) cycleSeconds = seconds; }
 
   // Re-apply immediately, e.g. after resume or unlock.
   public void Kick() { lock (gate) requested++; wake.Set(); }
@@ -127,15 +131,15 @@ class LightingWorker {
     int failures = 0;
     bool reportedMissing = false;
     while (!stopping) {
-      Mode m; Color c; int req;
-      lock (gate) { m = mode; c = solid; req = requested; }
+      Mode m; Color c; int req, cycle;
+      lock (gate) { m = mode; c = solid; req = requested; cycle = cycleSeconds; }
       var now = DateTime.UtcNow;
       int wait;
       try {
         bool due = m == Mode.Rainbow || req != rendered || now >= nextRefresh;
         if (due) {
           if (m == Mode.Rainbow) {
-            hue = (hue + (now - last).TotalSeconds * 360.0 / 8.0) % 360.0; // full cycle every 8 s
+            hue = (hue + (now - last).TotalSeconds * 360.0 / cycle) % 360.0;
             c = Hsv(hue, 1, 1);
           } else if (m == Mode.Off) c = Color.Black;
           last = now;
@@ -182,6 +186,11 @@ class App : ApplicationContext {
   const int VK_CONTROL = 0x11, VK_MENU = 0x12;
   const int HoldThresholdMs = 400;       // shorter press = tap (next mode)
   const double PickCycleSeconds = 6.0;   // one full trip around the hue wheel while holding
+  // Aurora speed: seconds per color cycle, adjusted in whole-second steps. 2 s is about as fast as
+  // a calm full-keyboard color cycle gets before it reads as flashing; beyond 20 s the change is
+  // hard to notice at all.
+  public const int MinCycle = 2, MaxCycle = 20, DefaultCycle = 8;
+  const int SpeedStepMs = 350;           // while holding, move one step this often
   // Firmware default of the Legion 5 15AHP11 keyboard profile (#5805FF).
   static readonly Color DefaultSolid = Color.FromArgb(0x58, 0x05, 0xFF);
   static readonly string StateFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "state.txt");
@@ -196,6 +205,8 @@ class App : ApplicationContext {
   DateTime pressedAt, lastPickTick;
   bool pressPending, picking;
   double pickHue;
+  int auroraCycle = DefaultCycle;
+  DateTime lastSpeedStep;
   readonly EventWaitHandle exitEvent;
   bool hotkeyOk, hotkeyWarned;
   Mode mode;
@@ -274,11 +285,11 @@ class App : ApplicationContext {
 
   void Next() { Apply((Mode)(((int)mode + 1) % 3)); }
 
-  // Hotkey pressed. Outside solid-color mode it switches mode at once. In solid-color mode we wait
-  // to see whether it is a tap (next mode, on release) or a hold (sweep the hue until release).
+  // Hotkey pressed. In Off mode it switches at once. In Solid and Aurora modes we wait to see whether
+  // it is a tap (next mode, on release) or a hold: Solid sweeps the hue, Aurora steps the cycle time.
   void OnHotkey() {
     if (pressPending) return;
-    if (mode != Mode.Solid) { Next(); return; }
+    if (mode == Mode.Off) { Next(); return; }
     pressPending = true; picking = false;
     pressedAt = DateTime.UtcNow;
     holdTimer.Start();
@@ -292,16 +303,31 @@ class App : ApplicationContext {
     if (!held) {
       holdTimer.Stop();
       pressPending = false;
-      if (picking) { picking = false; Apply(Mode.Solid); Log.Write("Solid color set to #" + (solid.ToArgb() & 0xFFFFFF).ToString("X6")); }
-      else Next();
+      if (!picking) Next();
+      else {
+        picking = false;
+        Apply(mode);
+        if (mode == Mode.Solid) Log.Write("Solid color set to #" + (solid.ToArgb() & 0xFFFFFF).ToString("X6"));
+        else Log.Write("Aurora cycle set to " + auroraCycle + " s");
+      }
       return;
     }
     if (!picking && (now - pressedAt).TotalMilliseconds >= HoldThresholdMs) {
       picking = true;
       pickHue = solid.GetHue();
       lastPickTick = now;
+      lastSpeedStep = DateTime.MinValue; // first speed step happens immediately
     }
-    if (picking) {
+    if (picking && mode == Mode.Rainbow) {
+      // Discrete steps toward faster (the bar fills to the right); after the fastest setting it
+      // wraps back to the slowest and continues.
+      if ((now - lastSpeedStep).TotalMilliseconds >= SpeedStepMs) {
+        lastSpeedStep = now;
+        auroraCycle = auroraCycle <= MinCycle ? MaxCycle : auroraCycle - 1;
+        worker.SetCycle(auroraCycle);
+        osd.ShowSpeed(auroraCycle);
+      }
+    } else if (picking) {
       pickHue = (pickHue + (now - lastPickTick).TotalSeconds * 360.0 / PickCycleSeconds) % 360.0;
       lastPickTick = now;
       solid = LightingWorker.Hsv(pickHue, 1, 1);
@@ -312,8 +338,9 @@ class App : ApplicationContext {
 
   void Apply(Mode m, bool showOsd = true) {
     mode = m;
+    worker.SetCycle(auroraCycle);
     worker.Set(m, solid);
-    if (showOsd) osd.ShowMode(m, solid);
+    if (showOsd) osd.ShowMode(m, solid, auroraCycle);
     offItem.Checked = m == Mode.Off; solidItem.Checked = m == Mode.Solid; rainbowItem.Checked = m == Mode.Rainbow;
     UpdateTrayText();
     SaveState();
@@ -333,11 +360,13 @@ class App : ApplicationContext {
       // Format "mode,argb,2". Older versions stored a random color without the version field;
       // those fall back to the default color.
       solid = p.Length >= 3 && p[2] == "2" ? Color.FromArgb(int.Parse(p[1])) : DefaultSolid;
+      // Optional 4th field (1.2+): aurora cycle seconds.
+      if (p.Length >= 4) auroraCycle = Math.Max(MinCycle, Math.Min(MaxCycle, int.Parse(p[3])));
     } catch { mode = Mode.Rainbow; }
   }
 
   void SaveState() {
-    try { File.WriteAllText(StateFile, (int)mode + "," + solid.ToArgb() + ",2"); } catch (Exception ex) { Log.Write("Could not save state: " + ex.Message); }
+    try { File.WriteAllText(StateFile, (int)mode + "," + solid.ToArgb() + ",2," + auroraCycle); } catch (Exception ex) { Log.Write("Could not save state: " + ex.Message); }
   }
 
   protected override void ExitThreadCore() {
@@ -367,7 +396,8 @@ class App : ApplicationContext {
       Osd.RenderPreview(args[1] + "-off.png", Mode.Off, DefaultSolid, false, 0);
       Osd.RenderPreview(args[1] + "-solid.png", Mode.Solid, DefaultSolid, false, 0);
       Osd.RenderPreview(args[1] + "-aurora.png", Mode.Rainbow, DefaultSolid, false, 0);
-      Osd.RenderPreview(args[1] + "-pick.png", Mode.Solid, LightingWorker.Hsv(160, 1, 1), true, 160);
+      Osd.RenderPreview(args[1] + "-aurora-adjust.png", Mode.Rainbow, DefaultSolid, true, 0, 5);
+      Osd.RenderPreview(args[1] + "-solid-adjust.png", Mode.Solid, LightingWorker.Hsv(160, 1, 1), true, 160);
       return;
     }
     bool created;

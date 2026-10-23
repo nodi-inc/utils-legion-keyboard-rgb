@@ -24,6 +24,7 @@ class Osd : Form {
   readonly float scale;
   Mode mode;
   Color solid;
+  int cycle = App.DefaultCycle;   // Aurora seconds per color cycle
   bool picking;
   double pickHue;
   DateTime shownAt, lastInput;
@@ -58,9 +59,15 @@ class Osd : Form {
   }
 
   // Mode changed (tap, tray menu, or end of a color pick).
-  public void ShowMode(Mode m, Color c) {
+  public void ShowMode(Mode m, Color c, int cycleSeconds) {
     holdMs = picking ? AfterPickMs : VisibleMs;
-    mode = m; solid = c; picking = false;
+    mode = m; solid = c; cycle = cycleSeconds; picking = false;
+    Touch();
+  }
+
+  // Aurora speed adjustment in progress.
+  public void ShowSpeed(int cycleSeconds) {
+    mode = Mode.Rainbow; cycle = cycleSeconds; picking = true;
     Touch();
   }
 
@@ -88,7 +95,7 @@ class Osd : Form {
   // Bitmaps render at 96 dpi, so size fonts in pixels scaled to the monitor DPI.
   Font Px(string family, float points) { return new Font(family, points * 96f / 72f * scale, FontStyle.Regular, GraphicsUnit.Pixel); }
 
-  bool HasPickerRows { get { return mode == Mode.Solid; } }
+  bool HasPickerRows { get { return mode != Mode.Off; } }
 
   int PanelHeight { get { return HeaderH + ChipsH + HintH + (HasPickerRows ? PickerH : 0) + BottomPad; } }
 
@@ -127,8 +134,8 @@ class Osd : Form {
   }
 
   // Development aid: render the panel to a PNG without showing a window (--render-osd).
-  public static void RenderPreview(string path, Mode m, Color c, bool picker, double hue) {
-    var o = new Osd { mode = m, solid = c, picking = picker, pickHue = hue };
+  public static void RenderPreview(string path, Mode m, Color c, bool picker, double hue, int cycleSeconds = App.DefaultCycle) {
+    var o = new Osd { mode = m, solid = c, picking = picker, pickHue = hue, cycle = cycleSeconds };
     int w = o.S(W), h = o.S(o.PanelHeight);
     using (var bmp = new Bitmap(w + 40, h + 40, PixelFormat.Format32bppArgb)) {
       using (var g = Graphics.FromImage(bmp)) {
@@ -183,7 +190,8 @@ class Osd : Form {
     // Hotkey hint under the chips
     DrawHint(g, w, S(HeaderH + ChipsH) + S(6), "Press", "Ctrl+Alt+B", "to switch mode");
 
-    if (HasPickerRows) DrawPicker(g, w);
+    if (mode == Mode.Solid) DrawPicker(g, w);
+    else if (mode == Mode.Rainbow) DrawSpeed(g, w);
   }
 
   // Centered hint line with the hotkey drawn as a keycap: "<before> [key] <after>".
@@ -217,7 +225,7 @@ class Osd : Form {
       using (var b = new SolidBrush(Color.FromArgb(a, solid))) g.FillEllipse(b, r);
     } else {
       // Rotating hue sweep, like the Aurora effect itself.
-      double phase = (DateTime.UtcNow.TimeOfDay.TotalSeconds * 45) % 360;
+      double phase = AuroraPhase();
       using (var br = HueBrush(r, phase, a)) g.FillEllipse(br, r);
     }
   }
@@ -250,6 +258,57 @@ class Osd : Form {
 
     if (picking) DrawHint(g, w, bar.Bottom + S(44), "Release", "Ctrl+Alt+B", "to keep this color");
     else DrawHint(g, w, bar.Bottom + S(44), "Hold", "Ctrl+Alt+B", "to adjust the color");
+  }
+
+  // Hue the keyboard is roughly showing now, so the OSD's Aurora visuals move at the chosen speed.
+  double AuroraPhase() { return (DateTime.UtcNow.TimeOfDay.TotalSeconds * 360.0 / cycle) % 360; }
+
+  // Aurora row: discrete speed track (Slow ... Fast), one tick per step, value in seconds per cycle.
+  void DrawSpeed(Graphics g, int w) {
+    float top = S(HeaderH + ChipsH + HintH);
+    using (var div = new Pen(Color.FromArgb(28, 255, 255, 255), 1)) g.DrawLine(div, S(Pad + 6), top, w - S(Pad + 6), top);
+    var bar = new RectangleF(S(Pad + 10), top + S(18), w - 2 * S(Pad + 10), S(14));
+    int steps = App.MaxCycle - App.MinCycle;
+    float frac = (App.MaxCycle - cycle) / (float)steps;   // left = slow, right = fast
+    float mx = bar.X + frac * bar.Width, my = bar.Y + bar.Height / 2;
+    // Calm monochrome track: dim groove, light-gray fill up to the marker.
+    var filled = new RectangleF(bar.X, bar.Y, Math.Max(bar.Height, mx - bar.X + bar.Height / 2), bar.Height);
+    using (var p = Round(bar, bar.Height / 2)) {
+      using (var track = new SolidBrush(Color.FromArgb(26, 255, 255, 255))) g.FillPath(track, p);
+      using (var fp = Round(filled, bar.Height / 2))
+      using (var fb = new SolidBrush(Color.FromArgb(150, 205, 208, 216))) g.FillPath(fb, fp);
+      using (var pen = new Pen(Color.FromArgb(50, 255, 255, 255), 1)) g.DrawPath(pen, p);
+    }
+    // One tick per whole-second step: dark on the filled part, light on the groove.
+    float tr = Math.Max(1f, S(1.5f)), inset = bar.Height / 2;
+    using (var onFill = new SolidBrush(Color.FromArgb(90, 20, 20, 26)))
+    using (var onTrack = new SolidBrush(Color.FromArgb(90, 255, 255, 255)))
+      for (int i = 0; i <= steps; i++) {
+        float tx = bar.X + inset + i * (bar.Width - 2 * inset) / steps;
+        g.FillEllipse(tx <= mx ? onFill : onTrack, tx - tr, my - tr, tr * 2, tr * 2);
+      }
+    // Marker
+    float mr = S(10);
+    mx = Math.Max(bar.X + mr * 0.6f, Math.Min(bar.Right - mr * 0.6f, mx));
+    using (var shadow = new SolidBrush(Color.FromArgb(90, 0, 0, 0))) g.FillEllipse(shadow, mx - mr, my - mr + S(2), mr * 2, mr * 2);
+    using (var fill = new SolidBrush(Color.FromArgb(255, 236, 238, 242))) g.FillEllipse(fill, mx - mr, my - mr, mr * 2, mr * 2);
+    using (var ring = new Pen(Color.FromArgb(255, 150, 154, 164), Math.Max(1.5f, S(1.5f)))) g.DrawEllipse(ring, mx - mr, my - mr, mr * 2, mr * 2);
+
+    // "Slow" / value / "Fast"
+    float y = bar.Bottom + S(12);
+    using (var dim = new SolidBrush(Color.FromArgb(110, 255, 255, 255))) {
+      g.DrawString("Slow", hintFont, dim, bar.X, y);
+      var fs = g.MeasureString("Fast", hintFont);
+      g.DrawString("Fast", hintFont, dim, bar.Right - fs.Width, y);
+    }
+    using (var tb = new SolidBrush(Color.FromArgb(200, 255, 255, 255))) {
+      string v = cycle + " s / cycle";
+      var sz = g.MeasureString(v, hexFont);
+      g.DrawString(v, hexFont, tb, (w - sz.Width) / 2, y);
+    }
+
+    if (picking) DrawHint(g, w, bar.Bottom + S(44), "Release", "Ctrl+Alt+B", "to keep this speed");
+    else DrawHint(g, w, bar.Bottom + S(44), "Hold", "Ctrl+Alt+B", "to adjust the speed");
   }
 
   static LinearGradientBrush HueBrush(RectangleF r, double phase, int alpha) {

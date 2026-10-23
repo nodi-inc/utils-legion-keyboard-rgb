@@ -4,15 +4,35 @@ A tiny, dependency-free replacement for the keyboard backlight controls in **Len
 
 Removing Legion Space also stops **Fn+Space** from changing the keyboard RGB lighting. LegionKbdRgb brings that control back with a global hotkey and a tray icon. It is a single ~60 KB executable that uses almost no CPU, has no background services and no telemetry, and does not need administrator rights.
 
-![Setup wizard](docs/setup-wizard.png)
+<p align="center"><img src="docs/osd-solid.png" alt="On-screen display in Solid mode" width="440"></p>
+
+## How to use
+
+Everything is done with one hotkey, **Ctrl+Alt+B**. Each press shows a small on-screen display (OSD) near the bottom of the screen. The OSD is click-through, never takes focus, and fades out 2 seconds after your last key press.
+
+### Tap to switch modes
+
+A short press cycles **Off → Solid → Aurora → Off**.
+
+| Off | Solid | Aurora |
+|:---:|:---:|:---:|
+| <img src="docs/osd-off.png" alt="Off" width="290"> | <img src="docs/osd-solid.png" alt="Solid" width="290"> | <img src="docs/osd-aurora.png" alt="Aurora" width="290"> |
+| Backlight off | One fixed color. The default is the Legion firmware purple `#5805FF`. | The whole keyboard flows smoothly through the color wheel. |
+
+### Hold to adjust
+
+In **Solid** and **Aurora** modes, holding Ctrl+Alt+B for about 0.4 s adjusts the current mode instead of switching. Release the keys to keep the value. It is remembered across reboots. A short tap still moves to the next mode.
+
+| Solid: choose a color | Aurora: choose the speed |
+|:---:|:---:|
+| <img src="docs/osd-solid-adjust.png" alt="Choosing a solid color" width="430"> | <img src="docs/osd-aurora-adjust.png" alt="Choosing the aurora speed" width="430"> |
+| The color sweeps around the hue wheel, taking 6 s for a full turn. The keyboard follows live. | The speed steps through **20 s → 2 s per color cycle**, one second at a time, moving toward *Fast* about three times a second. After the fastest setting it wraps back to the slowest. |
+
+*Reset solid color to default* in the tray menu restores the purple.
 
 ## Features
 
-- **Ctrl+Alt+B** cycles the backlight: **Off → Solid color → Aurora → Off**
-  - *Solid color* defaults to the Legion firmware purple (`#5805FF`).
-  - **Choosing a color:** in solid-color mode, **hold** Ctrl+Alt+B. After about 0.4 s the color starts sweeping around the hue wheel, taking 6 s for a full turn. Release the keys to keep the color shown at that moment. It is remembered. A short tap still moves to the next mode.
-  - *Reset solid color to default* in the tray menu restores the purple.
-  - *Aurora* smoothly cycles through the hue wheel every 8 seconds.
+- A single hotkey with tap and hold actions, plus the OSD described above.
 - A notification-area (tray) icon: left-click selects the next mode; right-click opens a menu to pick a mode or exit.
 - The last mode is remembered across sign-out and reboot.
 - Designed to keep running unattended:
@@ -70,6 +90,9 @@ Download `LegionKbdRgb-Setup-<version>.exe` from the [latest release](https://gi
 > Maintainers who want signed builds can configure optional signing; see [docs/code-signing.md](docs/code-signing.md).
 
 ### What the installer does
+
+<p align="center"><img src="docs/setup-wizard.png" alt="Setup wizard" width="560"></p>
+
 
 | Item | Location |
 |---|---|
